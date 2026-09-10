@@ -1,0 +1,12 @@
+# Build artifacts.  Re-create with `make`.
+*.cmo
+*.cmi
+*.byte
+export.txt
+
+# Generated JS bundles next to the Makefile (large; ~10–16 MB each).
+# We do NOT ignore site/hol_top_worker.js — that one is checked in so the
+# pre-built site/ directory works end-to-end on a fresh clone.
+/test_node.js
+/hol_top_camlp5.js
+/hol_top_worker.js
