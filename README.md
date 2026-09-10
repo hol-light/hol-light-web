@@ -1,16 +1,5 @@
 # HOL Light in the browser via js_of_ocaml
 
-This directory is an experiment in running HOL Light in JavaScript using
-[`js_of_ocaml`](https://ocsigen.org/js_of_ocaml/).  All the moving pieces from
-`hol.sh` (the OCaml toplevel, camlp5 with HOL Light's backquote syntax,
-`zarith` big integers, the full `hol_lib`) end up linked into a single `.js`
-bundle that runs unmodified in node and in modern browsers.
-
-The browser demo (`index.html` + `hol_top_worker.js`) loads HOL Light into a
-**Web Worker** so the UI stays responsive during the ~1–2 minute kernel
-bootstrap, and stdout/stderr stream live to the page as Format buffers
-flush — same hook jsoo's own `lwt_toplevel` example uses.
-
 ## Run it without building
 
 The `site/` directory in this repo is **pre-built and self-contained** —
@@ -46,6 +35,19 @@ git and are what you edit:
 | `patches/*.patch` | Tiny unified diffs applied to the deployed `site/`'s copy of upstream files.  Each patch adds a hook (a `ref` callback) so jsoo-specific behaviour can be injected without forking the upstream file.  `make site` applies them with `patch -F0 --forward`; ANY drift in surrounding context fails the build, so we notice when an upstream edit lands near a hook. |
 | `Makefile`, `README.md`, `.gitignore` | Build glue, this file, and what to keep out of git. |
 
+### Generated artefacts
+
+These are produced by `make`.  Most are excluded from git (see `.gitignore`);
+the exception is `site/`, which is checked in pre-built so the demo runs
+without building anything (see "Run it without building" above).
+
+| Output | In git? | How it's produced |
+| --- | --- | --- |
+| `*.cmo` / `*.cmi` / `*.byte` | no | `ocamlfind ocamlc` from the `.ml`s above plus the parent tree's `bignum.cmo`, `hol_loader.cmo`, `hol_lib.cmo`, and `pa_j.cmo`. |
+| `export.txt` | no | `jsoo_listunits` enumeration of the OCaml units the toplevel must keep around at runtime (so `JsooTop` can resolve identifiers in `Hol_lib`, `Stdlib`, `Zarith`, …). |
+| `test_node.js`, `hol_top_camlp5.js`, `hol_top_worker.js` (top-level copies) | no | `js_of_ocaml --toplevel --export export.txt …` over the corresponding `.byte`.  The worker bundle additionally passes `--effects=cps` (see "How streaming works"). |
+| `site/` | **yes** | `make site` (or `make all`, which now includes it) — `rsync` of the parent HOL Light tree minus excludes, plus `index.html` and `hol_top_worker.js` dropped at the root.  Re-running `make site` regenerates the directory in place; commit the diff alongside the parent-commit reference at the top of this README. |
+
 #### Current patches
 
 | Patch | Hook it adds | Why |
@@ -73,19 +75,6 @@ diff -u /tmp/foo.ml.orig /tmp/foo.ml.new \
   > patches/foo.ml.patch
 make site   # should now apply cleanly
 ```
-
-### Generated artefacts
-
-These are produced by `make`.  Most are excluded from git (see `.gitignore`);
-the exception is `site/`, which is checked in pre-built so the demo runs
-without building anything (see "Run it without building" above).
-
-| Output | In git? | How it's produced |
-| --- | --- | --- |
-| `*.cmo` / `*.cmi` / `*.byte` | no | `ocamlfind ocamlc` from the `.ml`s above plus the parent tree's `bignum.cmo`, `hol_loader.cmo`, `hol_lib.cmo`, and `pa_j.cmo`. |
-| `export.txt` | no | `jsoo_listunits` enumeration of the OCaml units the toplevel must keep around at runtime (so `JsooTop` can resolve identifiers in `Hol_lib`, `Stdlib`, `Zarith`, …). |
-| `test_node.js`, `hol_top_camlp5.js`, `hol_top_worker.js` (top-level copies) | no | `js_of_ocaml --toplevel --export export.txt …` over the corresponding `.byte`.  The worker bundle additionally passes `--effects=cps` (see "How streaming works"). |
-| `site/` | **yes** | `make site` (or `make all`, which now includes it) — `rsync` of the parent HOL Light tree minus excludes, plus `index.html` and `hol_top_worker.js` dropped at the root.  Re-running `make site` regenerates the directory in place; commit the diff alongside the parent-commit reference at the top of this README. |
 
 ## Build
 
