@@ -1,5 +1,7 @@
 # HOL Light in the browser via js_of_ocaml
 
+You can try this online through https://hol-light.github.io/try.
+
 ## Run it without building
 
 The `site/` directory in this repo is **pre-built and self-contained** —
