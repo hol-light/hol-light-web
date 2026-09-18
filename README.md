@@ -160,6 +160,29 @@ The layout mirrors the parent HOL Light tree, so `loadt "Library/words.ml"`
 resolves to `<origin>/Library/words.ml` over plain HTTP — see the next
 section.
 
+### Publishing to hol-light.github.io
+
+<https://hol-light.github.io/web/site/> is *this repository as a git
+submodule* of
+[hol-light.github.io](https://github.com/hol-light/hol-light.github.io)
+(path `web`, branch `main`), and a submodule is pinned to one commit.  So
+pushing here does not update the published REPL: someone has to move
+the pointer in the site repository too, and nothing does it automatically.
+
+```sh
+git clone git@github.com:hol-light/hol-light.github.io.git
+cd hol-light.github.io
+git submodule update --init --remote web   # fast-forward web/ to origin/main
+git commit -am 'Bump the web submodule'
+git push                                   # Pages rebuilds in ~1 min
+```
+
+Then check that what you pushed is actually live, e.g.
+
+```sh
+curl -s https://hol-light.github.io/web/site/index.html | wc -c
+```
+
 `make site` excludes the opam switch, build artefacts (`*.cmo`, `*.byte`,
 checkpoints, native binaries), and a few sub-projects that aren't needed at
 proof-load time (`TacticTrace`, `UnitTests`, `Proofrecording`, `ProofTrace`,
