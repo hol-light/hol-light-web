@@ -277,6 +277,16 @@
     #handle  { display: none; }
     #term-pane, #side { flex: 1 1 50%; }
   }
+
+  /* Embed mode (?embed=1): the page is running inside someone else's iframe
+     -- the HOL Light tutorial's "Try Online" pane is the first such user --
+     where the pane is narrow and the surrounding document already provides
+     the prose.  Drop the sidebar, its drag handle and the watermark, and
+     give the terminal the whole width. */
+  [data-embed] #side, [data-embed] #handle, [data-embed] #watermark {
+    display: none;
+  }
+  [data-embed] #term-pane { flex: 1 1 100%; }
 </style>
 </head>
 <body>
@@ -478,7 +488,21 @@ REWRITE_CONV[size; ARITH]
   function applyTheme(theme) {
     document.documentElement.setAttribute('data-theme', theme);
   }
-  applyTheme(Settings.get().theme);
+
+  // -------- Embed mode --------
+  // ?embed=1 strips the page down to the terminal (see the [data-embed] CSS)
+  // and turns on the postMessage API at the bottom of this script, so an
+  // embedding document can drive the REPL.  ?theme=light|dark overrides the
+  // persisted color mode for this load only -- the embedder passes its own
+  // preference so the pane matches the surrounding page -- and is ignored
+  // unless it names a palette we have.
+  const urlParams = new URLSearchParams(location.search);
+  const embedded  = urlParams.has('embed') && urlParams.get('embed') !== '0'
+                    && window.parent !== window;
+  if (embedded) document.documentElement.setAttribute('data-embed', '1');
+  const themeParam = urlParams.get('theme');
+  applyTheme(themeParam === 'light' || themeParam === 'dark'
+             ? themeParam : Settings.get().theme);
 
   // -------- Output sink --------
   // Each chunk arrives with a stream tag.  We merge consecutive chunks of
@@ -581,6 +605,7 @@ REWRITE_CONV[size; ARITH]
     setStatus('Booting HOL Light kernel… (~1–2 min on first load)', 'busy');
     userinput.classList.add('disabled');
     userinput.value = 'Booting kernel…';
+    notifyEmbedder();
 
     worker.onmessage = (ev) => {
       const m = ev.data; if (!m || !m.kind) return;
@@ -593,12 +618,14 @@ REWRITE_CONV[size; ARITH]
           userinput.value = '';
           autoresize();
           userinput.focus();
+          notifyEmbedder(); drainEmbedQueue();
           break;
         case 'done':
           busy = false;
           setStatus('Ready.', 'ready');
           userinput.classList.remove('disabled');
           userinput.focus();
+          notifyEmbedder(); drainEmbedQueue();
           break;
       }
     };
@@ -621,24 +648,33 @@ REWRITE_CONV[size; ARITH]
   // sessions and includes never-submitted edits).
   const submittedInputs = [];
 
-  function execute() {
-    if (!ready || busy) return;
-    let code = userinput.value;
-    if (!code.trim()) return;
+  // Submit one phrase (or a `;;`-separated run of them) to the worker.
+  // Shared by the input box and by the embedder API, so code arriving over
+  // postMessage is echoed, logged and remembered exactly like typed input.
+  function runCode(raw) {
+    let code = raw;
     // Auto-append `;;` if the user forgot.
     const trimmed = code.trimEnd();
     if (!trimmed.endsWith(';;')) code = trimmed + ';;';
-    History.push(userinput.value);
+    History.push(raw);
     submittedInputs.push(code);
     // Echo input as a "sharp" block so the look matches the OCaml toplevel.
     // The .sharp span is display:block, so we don't append a trailing '\n' —
     // the block already starts a new line of its own.
-    append('sharp', userinput.value);
-    userinput.value = '';
-    autoresize();
+    append('sharp', raw);
     busy = true;
     setStatus('Running…', 'busy');
     worker.postMessage({ kind: 'eval', src: code });
+    notifyEmbedder();
+  }
+
+  function execute() {
+    if (!ready || busy) return;
+    const code = userinput.value;
+    if (!code.trim()) return;
+    userinput.value = '';
+    autoresize();
+    runCode(code);
   }
 
   // -------- History (localStorage-backed, like lwt_toplevel) --------
@@ -786,6 +822,71 @@ REWRITE_CONV[size; ARITH]
       document.body.style.cursor = ''; document.body.style.userSelect = '';
     });
   })();
+
+  // -------- Embedder API (postMessage) --------
+  // With ?embed=1 inside an iframe, the embedding document can feed code to
+  // this REPL, so a document can offer "run this" buttons next to its
+  // examples.  The HOL Light tutorial's "Try Online" pane is the first user.
+  //
+  //   embedder -> page   { holweb: 'eval', src }   run src (queued if busy)
+  //                      { holweb: 'insert', src } put src in the input box
+  //                      { holweb: 'reset' }       Ctrl+K equivalent
+  //                      { holweb: 'ping' }        ask for a status message
+  //   page -> embedder   { holweb: 'hello' }      sent once, on load
+  //                      { holweb: 'status', state: 'booting'|'ready'|'busy',
+  //                                          queued: <phrases still waiting> }
+  //
+  // The kernel runs in a Worker with no server behind it, so evaluating a
+  // phrase an embedder sent is exactly as (un)dangerous as the user pasting
+  // it by hand: no allowlist of embedder origins to maintain, and nothing
+  // for a hostile embedder to reach that it doesn't already own.  Booting
+  // takes a minute or two, so `eval` never blocks -- phrases queue up while
+  // the kernel is still coming up and drain in order once it is ready.
+  const embedQueue = [];
+
+  function notifyEmbedder() {
+    if (!embedded) return;
+    const state = !ready ? 'booting' : (busy ? 'busy' : 'ready');
+    window.parent.postMessage(
+      { holweb: 'status', state, queued: embedQueue.length }, '*');
+  }
+
+  function drainEmbedQueue() {
+    if (!ready || busy || !embedQueue.length) return;
+    runCode(embedQueue.shift());
+    notifyEmbedder();
+  }
+
+  if (embedded) {
+    window.addEventListener('message', (ev) => {
+      const m = ev.data;
+      if (!m || typeof m !== 'object') return;
+      switch (m.holweb) {
+        case 'eval':
+          if (typeof m.src !== 'string' || !m.src.trim()) return;
+          embedQueue.push(m.src);
+          drainEmbedQueue();
+          notifyEmbedder();
+          break;
+        case 'insert':
+          // Hand the code over unevaluated, for the user to edit first.
+          if (typeof m.src !== 'string') return;
+          userinput.value = m.src;
+          autoresize();
+          if (ready) userinput.focus();
+          break;
+        case 'reset':
+          embedQueue.length = 0;
+          clearOutput(); appendMeta('--- toplevel reset ---\n');
+          spawnWorker();
+          break;
+        case 'ping':
+          notifyEmbedder();
+          break;
+      }
+    });
+    window.parent.postMessage({ holweb: 'hello' }, '*');
+  }
 
   // -------- Boot --------
   spawnWorker();

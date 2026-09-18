@@ -32,7 +32,7 @@ git and are what you edit:
 | `hol_top_worker.ml` | Web Worker entry point.  Mounts an HTTP-backed pseudo-FS (`Sys_js.mount` + sync XHR), opens four `Sys_js` channels (stdout/stderr/sharp/caml) plus their flushers, runs `JsooTop.initialize`, opens `Hol_lib`, installs the colored printers, wires `Hol_loader.file_loader` so `loads/loadt/needs` work, and runs the postMessage loop driven by `index.html`. |
 | `hol_top_node.ml` | Node-side smoke REPL.  Same idea as the worker, minus the postMessage / Sys_js plumbing — handy for testing that the camlp5 + `Hol_lib` link works at all (`node hol_top_camlp5.js`). |
 | `test_node.ml` | Smallest-possible bundle: a single `prove` call with no REPL.  Useful as a minimum-working-example. |
-| `index.html` | REPL UI: dark-theme two-pane layout, `↑/↓` history backed by `localStorage`, `Ctrl+L` clear, `Ctrl+K` reset, ANSI-color rendering of HOL Light's colored printers.  Modelled on jsoo's `lwt_toplevel/index.html`. |
+| `index.html` | REPL UI: dark-theme two-pane layout, `↑/↓` history backed by `localStorage`, `Ctrl+L` clear, `Ctrl+K` reset, ANSI-color rendering of HOL Light's colored printers.  Modelled on jsoo's `lwt_toplevel/index.html`.  Also serves as an embeddable widget — see "Embedding the REPL" below. |
 | `pcre2_stubs.js` | No-op JS stubs for camlp5's pcre2 dependency (HOL Light never exercises it).  Linked into the worker bundle at build time. |
 | `patches/*.patch` | Tiny unified diffs applied to the deployed `site/`'s copy of upstream files.  Each patch adds a hook (a `ref` callback) so jsoo-specific behaviour can be injected without forking the upstream file.  `make site` applies them with `patch -F0 --forward`; ANY drift in surrounding context fails the build, so we notice when an upstream edit lands near a hook. |
 | `Makefile`, `README.md`, `.gitignore` | Build glue, this file, and what to keep out of git. |
@@ -228,6 +228,35 @@ subsequent `needs`/`loadt` calls short-circuit.
 (Limits: only `.ml` sources work — `loadt "foo.cma"` would need
 `Dynlink`-style support, not yet wired up.  And anything `loadt`'s file
 ends up referencing must also be reachable under the deploy root.)
+
+### Embedding the REPL
+
+`index.html` doubles as a widget another page can drive, which is how the
+[HOL Light tutorial](https://hol-light.github.io/tutorial/HTML/tutorial.html)
+makes the `#` prompt lines in its printed sessions clickable: it frames this
+page and posts the phrase over.
+
+Two query parameters:
+
+| Parameter | Effect |
+| --- | --- |
+| `embed=1` | Only meaningful inside an iframe.  Hides the sidebar and the watermark so the terminal gets the whole width, and enables the `postMessage` API below. |
+| `theme=light` / `theme=dark` | Overrides the persisted color mode for this load only, so the pane can match the embedding page. |
+
+The protocol, once the frame is up:
+
+| Direction | Message | Meaning |
+| --- | --- | --- |
+| embedder → page | `{holweb: 'eval', src}` | Evaluate `src` (one phrase or several).  Never blocks: while the kernel is still booting, or busy with an earlier phrase, messages queue up and drain in order. |
+| embedder → page | `{holweb: 'insert', src}` | Put `src` in the input box without running it, for the user to edit. |
+| embedder → page | `{holweb: 'reset'}` | Same as `Ctrl+K`: wipe the toplevel and re-boot. |
+| embedder → page | `{holweb: 'ping'}` | Ask for a `status` message. |
+| page → embedder | `{holweb: 'hello'}` | Sent once, as soon as the page's script runs — well before the kernel is up.  Hold `eval`s until you see it, or they land before the listener exists. |
+| page → embedder | `{holweb: 'status', state, queued}` | `state` is `booting`, `busy` or `ready`; `queued` counts phrases still waiting.  Sent on every transition. |
+
+Any origin may embed the page and send it phrases.  The kernel runs in a
+Worker with no server behind it, so evaluating what an embedder sends is
+exactly as (un)dangerous as the user pasting the same text by hand.
 
 ### How the printers get installed
 
