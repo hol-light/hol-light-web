@@ -589,6 +589,7 @@ REWRITE_CONV[size; ARITH]
   }
 
   // -------- Worker plumbing --------
+  const WORKER_URL = 'hol_top_worker.js';
   let worker = null;
   let ready = false;
   let busy  = false;
@@ -600,7 +601,7 @@ REWRITE_CONV[size; ARITH]
 
   function spawnWorker() {
     if (worker) worker.terminate();
-    worker = new Worker('hol_top_worker.js');
+    worker = new Worker(WORKER_URL);
     ready = false; busy = false;
     setStatus('Booting HOL Light kernel… (~1–2 min on first load)', 'busy');
     userinput.classList.add('disabled');
@@ -629,9 +630,39 @@ REWRITE_CONV[size; ARITH]
           break;
       }
     };
+    // Firefox reports load and compile failures as a bare Event, with no
+    // message, so e.message alone prints a useless "undefined".  Re-fetch
+    // the script to tell "could not download" from "could not compile".
     worker.onerror = (e) => {
-      setStatus('Worker error: ' + e.message);
-      appendMeta('\n[worker error: ' + e.message + ']\n');
+      const detail = e && e.message;
+      if (detail) {
+        setStatus('Worker error: ' + detail);
+        appendMeta('\n[worker error: ' + detail + ']\n');
+        return;
+      }
+      setStatus('Worker failed to start — diagnosing…');
+      appendMeta('\n[worker failed to start, and the browser gave no reason.' +
+                 '  Checking whether ' + WORKER_URL + ' is reachable…]\n');
+      fetch(WORKER_URL, { cache: 'no-store' })
+        .then((r) => {
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return r.text();
+        })
+        .then((src) => {
+          setStatus('Worker error: could not compile ' + WORKER_URL);
+          appendMeta('[' + WORKER_URL + ' downloaded fine (' + src.length +
+                     ' bytes), so the browser could not compile it.\n' +
+                     ' On Firefox this is usually the 1 MB Web Worker stack' +
+                     ' limit — the same bundle compiles on the main thread,' +
+                     ' and in Chrome.\n' +
+                     ' Please report this with your OS and browser version.]\n');
+        })
+        .catch((err) => {
+          setStatus('Worker error: could not load ' + WORKER_URL);
+          appendMeta('[' + WORKER_URL + ' could not be downloaded (' +
+                     err.message + ').  It is missing, truncated, or being' +
+                     ' blocked by an extension or proxy.]\n');
+        });
     };
   }
 
