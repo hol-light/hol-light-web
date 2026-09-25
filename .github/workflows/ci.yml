@@ -59,7 +59,10 @@ jobs:
         run: |
           set -xe
           eval $(opam env --switch=${{ github.workspace }}/parent --set-switch)
-          opam install -y js_of_ocaml js_of_ocaml-toplevel zarith_stubs_js
+          # `make deps` installs the JSOO_VERSION pinned in the Makefile, so
+          # CI builds with the same compiler as the deployed bundle.
+          cd parent/Web
+          make deps
 
       - name: Build the node bundle
         run: |
@@ -84,3 +87,13 @@ jobs:
           # No uncaught exception or `Error:` line should have escaped the
           # toplevel — those would indicate a regression in the link path.
           ! grep -E '^(Exception|Error):' log.txt
+
+      # The deployed bundle is hol_top_worker.js, which nothing above builds.
+      # Its emitted nesting must stay shallow or Firefox cannot compile it in
+      # a Web Worker: at depth 569 the worker died before running a line.
+      - name: Build the worker bundle and check its nesting depth
+        run: |
+          set -xe
+          eval $(opam env --switch=${{ github.workspace }}/parent --set-switch)
+          cd parent/Web
+          make check-depth

@@ -10,3 +10,7 @@ export.txt
 /test_node.js
 /hol_top_camlp5.js
 /hol_top_worker.js
+
+# npm dependency for check_ast_depth.js (make check-depth).
+/node_modules/
+/package-lock.json

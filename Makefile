@@ -23,6 +23,10 @@ CAMLP5_LINK := $(CAMLP5)/camlp5o.cma $(HOL)/pa_j.cmo
 
 PKGS   := zarith,js_of_ocaml,js_of_ocaml-toplevel,fmt,pcre2,camlp-streams
 
+# Pinned: jsoo's output nesting varies by version, and too much of it
+# breaks Firefox (see hol_top_worker.js).  Re-check depth after bumping.
+JSOO_VERSION := 6.4.1
+
 INCS   := -I $(HOL) \
           -I $(HOL)/_opam/lib/zarith \
           -I $(HOL)/_opam/lib/ocaml/compiler-libs \
@@ -33,6 +37,21 @@ JSOO_FLAGS := --toplevel --export export.txt --disable shortvar \
               -w no-missing-effects-backend $(INCS) $(ZJS) pcre2_stubs.js
 
 all: test_node.js hol_top_camlp5.js hol_top_worker.js site
+
+# Install the build tools into the active switch, at the pinned version.
+deps:; \
+  opam install -y \
+    js_of_ocaml.$(JSOO_VERSION) \
+    js_of_ocaml-compiler.$(JSOO_VERSION) \
+    js_of_ocaml-toplevel.$(JSOO_VERSION) \
+    zarith_stubs_js
+
+# Ceiling on emitted nesting.  429 today; 569 broke Firefox on macOS.
+MAX_AST_DEPTH := 480
+
+check-depth: hol_top_worker.js
+	npm install --no-save acorn
+	node check_ast_depth.js $< $(MAX_AST_DEPTH)
 
 # Export list shared by all toplevel bundles.  compiler-libs.common +
 # compiler-libs.toplevel pull in Types/Env/Toploop/Longident/Path/Ident/
@@ -80,12 +99,13 @@ hol_top_worker.byte: hol_top_worker.ml web_init.cmo $(CMOS) $(HOL)/pa_j.cmo
 	  web_init.cmo $(CMOS) $(CAMLP5_LINK) $< -o $@
 
 hol_top_worker.js: hol_top_worker.byte export.txt pcre2_stubs.js
-	# --effects=cps trampolines every call so HOL Light's deep bootstrap
-	# recursion doesn't blow the Web Worker's small JS stack (≈0.5 MB in
-	# Chrome).  Costs ~2x runtime + ~30% bundle, but it's the only way to
-	# avoid "Stack_overflow" in the worker; main-thread bundles get away
-	# without it because they have a ~8 MB stack.
-	js_of_ocaml $(JSOO_FLAGS) --effects=cps $< -o $@
+	# --effects=cps avoids "Stack_overflow" in the worker's small JS stack.
+	# It is also fastest here: 215s boot, vs >900s for the alternatives.
+	# --disable inline/compact flatten nesting, AST depth 569 -> 429.
+	# Firefox gives a worker 1 MB; at 569 the compile overflowed on macOS.
+	# Re-check the depth if you touch these flags.
+	js_of_ocaml $(JSOO_FLAGS) --effects=cps \
+	  --disable inline --disable compact $< -o $@
 
 # Convenience: build site/ (so loadt resolves against the deployed tree)
 # and serve it on http://localhost:8000/.  Depends on the worker bundle so
